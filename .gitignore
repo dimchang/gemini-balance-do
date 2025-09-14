@@ -159,7 +159,7 @@ dist
 .pnp.\*
 
 # wrangler project
-
+.dev.vars
 .dev.vars*
 !.dev.vars.example
 .env*

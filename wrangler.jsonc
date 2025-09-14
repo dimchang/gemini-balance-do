@@ -4,7 +4,7 @@
  */
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	"name": "gemini-balance-do",
+	"name": "gemini-balance",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-08-05",
 	"migrations": [
@@ -25,8 +25,8 @@
 		"enabled": true
 	},
 	"vars": {
-		"AUTH_KEY": "ajielu",
-		"HOME_ACCESS_KEY": "7b18e536c27ab304266db3220b8e000db8fbbe35d6e1fde729a1a1d47303858d",
+		//"AUTH_KEY": "ajielu",
+		//"HOME_ACCESS_KEY": "7b18e536c27ab304266db3220b8e000db8fbbe35d6e1fde729a1a1d47303858d",
 		"FORWARD_CLIENT_KEY_ENABLED": false
 	}
 	/**

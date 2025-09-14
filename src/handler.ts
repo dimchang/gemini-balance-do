@@ -966,12 +966,12 @@ async getAllApiKeys(): Promise<Response> {
 
 			const stats = await Promise.all(
 				keys.map(async (key) => {
-					const { api_key, total_calls } = key as { api_key: string; total_calls: number };
+					const [api_key, total_calls] = key as [string, number];
 
 					const oneMinuteCountResult = await this.ctx.storage.sql
 						.exec('SELECT COUNT(*) as count FROM api_key_usage_logs WHERE api_key = ? AND timestamp >= ?', api_key, oneMinuteAgo)
 						.raw<any>();
-					const oneMinuteCount = Array.from(oneMinuteCountResult)[0]?.count ?? 0;
+					const oneMinuteCount = (Array.from(oneMinuteCountResult)[0]?.[0] as number) ?? 0
 
 					const twentyFourHourCountResult = await this.ctx.storage.sql
 						.exec(
@@ -1031,7 +1031,7 @@ async getAllApiKeys(): Promise<Response> {
 				if (!allKeysResult) {
 					return null;
 				}
-				const keys = Array.from(allKeysResult).map((row) => row[0]);
+				const keys = Array.from(allKeysResult).map((row) => String(row[0]));
 
 				if (!keys || keys.length === 0) {
 					return null;
