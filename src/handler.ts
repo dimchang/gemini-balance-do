@@ -76,6 +76,12 @@ export class LoadBalancer extends DurableObject {
 
 		// 处理获取下一个API密钥的请求
 		if (pathname === '/api/next-key' && request.method === 'GET') {
+			if (!isAdminAuthenticated(request, this.env.HOME_ACCESS_KEY)) {
+				return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+					status: 401,
+					headers: fixCors({ headers: { 'Content-Type': 'application/json' } }).headers,
+				});
+			}
 			try {
 				const key = await this.getNextApiKeyInRotation();
 				if (!key) {
