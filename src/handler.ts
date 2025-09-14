@@ -980,7 +980,7 @@ async getAllApiKeys(): Promise<Response> {
 							twentyFourHoursAgo
 						)
 						.raw<any>();
-					const twentyFourHourCount = Array.from(twentyFourHourCountResult)[0]?.count ?? 0;
+					const twentyFourHourCount = (Array.from(twentyFourHourCountResult)[0]?.[0] as number) ?? 0;
 
 					return {
 						api_key,
