@@ -66,6 +66,7 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 				<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 				<title>Gemini API 密钥管理</title>
 				<script src="https://cdn.tailwindcss.com"></script>
+				<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 			</head>
 			<body class="bg-gray-100">
 				{showWarning && (
@@ -108,6 +109,9 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 										<button id="check-keys-btn" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition mr-2">
 											一键检查
 										</button>
+										<button id="delete-all-keys-btn" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition mr-2">
+											一键删除所有
+										</button>
 										<button id="refresh-keys-btn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition">
 											刷新
 										</button>
@@ -122,6 +126,7 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 												</th>
 												<th class="p-2">API 密钥</th>
 												<th class="p-2">状态</th>
+												<th class="p-2">总调用次数</th>
 											</tr>
 										</thead>
 										<tbody></tbody>
@@ -133,6 +138,16 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 								>
 									删除选中
 								</button>
+							</div>
+						</div>
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+							<div class="bg-white p-6 rounded-lg shadow-md">
+								<h3 class="text-xl font-semibold mb-4">最近1分钟调用次数</h3>
+								<canvas id="one-minute-chart"></canvas>
+							</div>
+							<div class="bg-white p-6 rounded-lg shadow-md">
+								<h3 class="text-xl font-semibold mb-4">最近24小时调用次数</h3>
+								<canvas id="twenty-four-hour-chart"></canvas>
 							</div>
 						</div>
 					</div>
@@ -149,29 +164,88 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 										const selectAllCheckbox = document.getElementById('select-all-keys');
 										const deleteSelectedBtn = document.getElementById('delete-selected-keys-btn');
 										const checkKeysBtn = document.getElementById('check-keys-btn');
+										const deleteAllKeysBtn = document.getElementById('delete-all-keys-btn');
+										let oneMinuteChart, twentyFourHourChart;
+
+										const renderCharts = (stats) => {
+											const labels = stats.map(s => s.api_key.substring(0, 8) + '...');
+											const oneMinuteData = stats.map(s => s.one_minute_calls);
+											const twentyFourHourData = stats.map(s => s.twenty_four_hour_calls);
+
+											if (oneMinuteChart) oneMinuteChart.destroy();
+											oneMinuteChart = new Chart(document.getElementById('one-minute-chart'), {
+												type: 'bar',
+												data: {
+													labels,
+													datasets: [{
+														label: '调用次数',
+														data: oneMinuteData,
+														backgroundColor: 'rgba(54, 162, 235, 0.6)',
+														borderColor: 'rgba(54, 162, 235, 1)',
+														borderWidth: 1
+													}]
+												},
+												options: { scales: { y: { beginAtZero: true } } }
+											});
+
+											if (twentyFourHourChart) twentyFourHourChart.destroy();
+											twentyFourHourChart = new Chart(document.getElementById('twenty-four-hour-chart'), {
+												type: 'bar',
+												data: {
+													labels,
+													datasets: [{
+														label: '调用次数',
+														data: twentyFourHourData,
+														backgroundColor: 'rgba(75, 192, 192, 0.6)',
+														borderColor: 'rgba(75, 192, 192, 1)',
+														borderWidth: 1
+													}]
+												},
+												options: { scales: { y: { beginAtZero: true } } }
+											});
+										};
+
+										const fetchAndRenderStats = async () => {
+											try {
+												const response = await fetch('/api/keys/stats');
+												const stats = await response.json();
+												stats.forEach(stat => {
+													const row = keysTableBody.querySelector(\`tr[data-key="\${stat.api_key}"]\`);
+													if (row) {
+														const totalCallsCell = row.querySelector('.total-calls-cell');
+														if (totalCallsCell) totalCallsCell.textContent = stat.total_calls;
+													}
+												});
+												renderCharts(stats);
+											} catch (error) {
+												console.error('Failed to fetch stats:', error);
+											}
+										};
 
 										const fetchAndRenderKeys = async () => {
-												keysTableBody.innerHTML = '<tr><td colspan="3" class="p-2 text-center">加载中...</td></tr>';
+												keysTableBody.innerHTML = '<tr><td colspan="4" class="p-2 text-center">加载中...</td></tr>';
 												try {
 												  const response = await fetch('/api/keys');
 												  const { keys } = await response.json();
 												  keysTableBody.innerHTML = '';
 												  if (keys.length === 0) {
-												    keysTableBody.innerHTML = '<tr><td colspan="3" class="p-2 text-center">暂无密钥</td></tr>';
+												    keysTableBody.innerHTML = '<tr><td colspan="4" class="p-2 text-center">暂无密钥</td></tr>';
 												  } else {
-												    keys.forEach(key => {
+												    keys.forEach(keyObj => {
 												      const row = document.createElement('tr');
-															row.dataset.key = key;
+															row.dataset.key = keyObj.api_key;
 												      row.innerHTML = \`
-												        <td class="p-2 w-6"><input type="checkbox" class="key-checkbox" data-key="\${key}" /></td>
-												        <td class="p-2 font-mono">\${key}</td>
+												        <td class="p-2 w-6"><input type="checkbox" class="key-checkbox" data-key="\${keyObj.api_key}" /></td>
+												        <td class="p-2 font-mono">\${keyObj.api_key}</td>
 												        <td class="p-2 status-cell">未知</td>
+												        <td class="p-2 total-calls-cell">\${keyObj.total_calls ?? 0}</td>
 												      \`;
 												      keysTableBody.appendChild(row);
 												    });
+														fetchAndRenderStats();
 												  }
 												} catch (error) {
-												  keysTableBody.innerHTML = '<tr><td colspan="3" class="p-2 text-center text-red-500">加载失败</td></tr>';
+												  keysTableBody.innerHTML = '<tr><td colspan="4" class="p-2 text-center text-red-500">加载失败</td></tr>';
 												  console.error('Failed to fetch keys:', error);
 												}
 										};
@@ -285,8 +359,32 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 
 										refreshKeysBtn.addEventListener('click', fetchAndRenderKeys);
 
+										deleteAllKeysBtn.addEventListener('click', async () => {
+											if (!confirm('确定要删除所有密钥吗？此操作不可撤销。')) {
+												return;
+											}
+
+											try {
+												const response = await fetch('/api/keys/all', {
+													method: 'DELETE',
+												});
+												const result = await response.json();
+												if (response.ok) {
+													alert(result.message || '所有密钥已成功删除。');
+													fetchAndRenderKeys();
+												} else {
+													alert(\`删除失败: \${result.error || '未知错误'}\`);
+												}
+											} catch (error) {
+												alert('请求失败，请检查网络连接。');
+												console.error('Failed to delete all keys:', error);
+											}
+										});
+
 										// Initial load
 										fetchAndRenderKeys();
+
+										setInterval(fetchAndRenderStats, 5000); // Refresh stats every 5 seconds
 								});
 				  `,
 					}}

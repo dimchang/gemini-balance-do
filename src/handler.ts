@@ -42,7 +42,21 @@ export class LoadBalancer extends DurableObject {
 		super(ctx, env);
 		this.env = env;
 		// Initialize the database schema upon first creation.
-		this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS api_keys (api_key TEXT PRIMARY KEY)');
+		this.ctx.storage.sql.exec(
+			'CREATE TABLE IF NOT EXISTS api_keys (api_key TEXT PRIMARY KEY, total_calls INTEGER DEFAULT 0)'
+		);
+		this.ctx.storage.sql.exec(
+			'CREATE TABLE IF NOT EXISTS api_key_usage_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, api_key TEXT, timestamp INTEGER)'
+		);
+		// Migration to add total_calls column if it doesn't exist
+		try {
+			this.ctx.storage.sql.exec('ALTER TABLE api_keys ADD COLUMN total_calls INTEGER DEFAULT 0');
+		} catch (e: any) {
+			// Ignore error if column already exists
+			if (!e.message.includes('duplicate column name')) {
+				console.error('Migration failed:', e);
+			}
+		}
 	}
 
 	async fetch(request: Request): Promise<Response> {
@@ -63,7 +77,9 @@ export class LoadBalancer extends DurableObject {
 		// 管理 API 权限校验（使用 HOME_ACCESS_KEY）
 		if (
 			(pathname === '/api/keys' && ['POST', 'GET', 'DELETE'].includes(request.method)) ||
-			(pathname === '/api/keys/check' && request.method === 'GET')
+			(pathname === '/api/keys/check' && request.method === 'GET') ||
+			(pathname === '/api/keys/stats' && request.method === 'GET') ||
+			(pathname === '/api/keys/all' && request.method === 'DELETE')
 		) {
 			if (!isAdminAuthenticated(request, this.env.HOME_ACCESS_KEY)) {
 				return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -80,8 +96,14 @@ export class LoadBalancer extends DurableObject {
 			if (pathname === '/api/keys' && request.method === 'DELETE') {
 				return this.handleDeleteApiKeys(request);
 			}
+			if (pathname === '/api/keys/all' && request.method === 'DELETE') {
+				return this.handleDeleteAllKeys();
+			}
 			if (pathname === '/api/keys/check' && request.method === 'GET') {
 				return this.handleApiKeysCheck();
+			}
+			if (pathname === '/api/keys/stats' && request.method === 'GET') {
+				return this.handleApiKeysStats();
 			}
 		}
 
@@ -170,7 +192,7 @@ export class LoadBalancer extends DurableObject {
 			if (this.env.FORWARD_CLIENT_KEY_ENABLED) {
 				return this.forwardRequest(url.toString(), request, headers);
 			}
-			const apiKey = await this.getRandomApiKey();
+			const apiKey = await this.getNextApiKeyInRotation();
 			if (!apiKey) {
 				return new Response('No API keys configured in the load balancer.', { status: 500 });
 			}
@@ -746,6 +768,22 @@ export class LoadBalancer extends DurableObject {
 	// Admin API Handlers
 	// =================================================================================================
 
+	async handleDeleteAllKeys(): Promise<Response> {
+		try {
+			await this.ctx.storage.sql.exec('DELETE FROM api_keys');
+			return new Response(JSON.stringify({ message: '所有API密钥已成功删除。' }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		} catch (error: any) {
+			console.error('删除所有API密钥失败:', error);
+			return new Response(JSON.stringify({ error: error.message || '内部服务器错误' }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			});
+		}
+	}
+
 	async handleApiKeys(request: Request): Promise<Response> {
 		try {
 			const { keys } = (await request.json()) as { keys: string[] };
@@ -807,14 +845,16 @@ export class LoadBalancer extends DurableObject {
 		try {
 			const results = await this.ctx.storage.sql.exec('SELECT api_key FROM api_keys').raw<any>();
 			const keys = Array.from(results);
+			console.log('keys: ', keys);
 
 			const checkResults = await Promise.all(
-				keys.map(async (key) => {
+				keys.map(async (key: string) => {
+					console.log('checking key: ', key);
 					try {
 						const response = await fetch(`${BASE_URL}/${API_VERSION}/models?key=${key}`);
-						return { key, valid: response.ok, error: response.ok ? null : await response.text() };
+						return { key: key, valid: response.ok, error: response.ok ? null : await response.text() };
 					} catch (e: any) {
-						return { key, valid: false, error: e.message };
+						return { key: key, valid: false, error: e.message };
 					}
 				})
 			);
@@ -844,15 +884,95 @@ export class LoadBalancer extends DurableObject {
 		}
 	}
 
-	async getAllApiKeys(): Promise<Response> {
+	// async getAllApiKeys(): Promise<Response> {
+	// 	try {
+	// 		const results = await this.ctx.storage.sql.exec('SELECT * FROM api_keys').raw();
+	// 		const keys = Array.from(results);
+	// 		console.log('getAllApiKeys keys: ', keys);
+	// 		return new Response(JSON.stringify({ keys }), {
+	// 			headers: { 'Content-Type': 'application/json' },
+	// 		});
+			
+	// 	} catch (error: any) {
+	// 		console.error('获取API密钥失败:', error);
+	// 		return new Response(JSON.stringify({ error: error.message || '内部服务器错误' }), {
+	// 			status: 500,
+	// 			headers: { 'Content-Type': 'application/json' },
+	// 		});
+	// 	}
+	// }
+
+	// ... existing code ...
+async getAllApiKeys(): Promise<Response> {
+	try {
+		const results = await this.ctx.storage.sql.exec('SELECT * FROM api_keys').raw();
+		const rawKeys = Array.from(results);
+		console.log('getAllApiKeys keys: ', rawKeys);
+		
+		// 将原始数组转换为对象数组
+		const keys = rawKeys.map(([api_key, total_calls]) => ({
+			api_key,
+			total_calls: total_calls || 0
+		}));
+		
+		return new Response(JSON.stringify({ keys }), {
+			headers: { 'Content-Type': 'application/json' },
+		});
+		
+	} catch (error: any) {
+		console.error('获取API密钥失败:', error);
+		return new Response(JSON.stringify({ error: error.message || '内部服务器错误' }), {
+			status: 500,
+			headers: { 'Content-Type': 'application/json' },
+		});
+	}
+}
+// ... existing code ...
+
+	async handleApiKeysStats(): Promise<Response> {
 		try {
-			const results = await this.ctx.storage.sql.exec('SELECT * FROM api_keys').raw<any>();
-			const keys = Array.from(results);
-			return new Response(JSON.stringify({ keys }), {
+			const now = Math.floor(Date.now() / 1000);
+			const oneMinuteAgo = now - 60;
+			const twentyFourHoursAgo = now - 24 * 60 * 60;
+
+			// Clean up old logs first
+			await this.ctx.storage.sql.exec('DELETE FROM api_key_usage_logs WHERE timestamp < ?', twentyFourHoursAgo - 60); // A little buffer
+
+			const keysResult = await this.ctx.storage.sql.exec('SELECT api_key, total_calls FROM api_keys').raw<any>();
+			const keys = Array.from(keysResult);
+
+			const stats = await Promise.all(
+				keys.map(async (key) => {
+					const { api_key, total_calls } = key as { api_key: string; total_calls: number };
+
+					const oneMinuteCountResult = await this.ctx.storage.sql
+						.exec('SELECT COUNT(*) as count FROM api_key_usage_logs WHERE api_key = ? AND timestamp >= ?', api_key, oneMinuteAgo)
+						.raw<any>();
+					const oneMinuteCount = Array.from(oneMinuteCountResult)[0]?.count ?? 0;
+
+					const twentyFourHourCountResult = await this.ctx.storage.sql
+						.exec(
+							'SELECT COUNT(*) as count FROM api_key_usage_logs WHERE api_key = ? AND timestamp >= ?',
+							api_key,
+							twentyFourHoursAgo
+						)
+						.raw<any>();
+					const twentyFourHourCount = Array.from(twentyFourHourCountResult)[0]?.count ?? 0;
+
+					return {
+						api_key,
+						total_calls,
+						one_minute_calls: oneMinuteCount,
+						twenty_four_hour_calls: twentyFourHourCount,
+					};
+				})
+			);
+
+			return new Response(JSON.stringify(stats), {
 				headers: { 'Content-Type': 'application/json' },
 			});
 		} catch (error: any) {
-			console.error('获取API密钥失败:', error);
+			console.error('获取API密钥统计失败:', error);
 			return new Response(JSON.stringify({ error: error.message || '内部服务器错误' }), {
 				status: 500,
 				headers: { 'Content-Type': 'application/json' },
@@ -866,17 +986,56 @@ export class LoadBalancer extends DurableObject {
 
 	private async getRandomApiKey(): Promise<string | null> {
 		try {
-			const results = await this.ctx.storage.sql.exec('SELECT * FROM api_keys ORDER BY RANDOM() LIMIT 1').raw<any>();
+			const results = await this.ctx.storage.sql.exec('SELECT api_key FROM api_keys ORDER BY RANDOM() LIMIT 1').raw<any>();
 			const keys = Array.from(results);
-			if (keys) {
+			if (keys && keys.length > 0) {
 				const key = keys[0] as any;
-				console.log(`Gemini Selected API Key: ${key}`);
-				return key;
+				console.log(`Gemini Selected API Key (Fallback): ${key.api_key}`);
+				return key.api_key;
 			}
 			return null;
 		} catch (error) {
 			console.error('获取随机API密钥失败:', error);
 			return null;
+		}
+	}
+
+	private async getNextApiKeyInRotation(): Promise<string | null> {
+		try {
+			// Use blockConcurrencyWhile to ensure atomicity of the counter operations during concurrent requests
+			return await this.ctx.blockConcurrencyWhile(async () => {
+				const allKeysResult = await this.ctx.storage.sql.exec('SELECT api_key FROM api_keys').raw<any>();
+				if (!allKeysResult) {
+					return null;
+				}
+				const keys = Array.from(allKeysResult).map((row) => (row as { api_key: string }).api_key);
+
+				if (!keys || keys.length === 0) {
+					return null;
+				}
+
+				let currentIndex = (await this.ctx.storage.get<number>('round_robin_index')) ?? 0;
+
+				if (currentIndex >= keys.length) {
+					currentIndex = 0;
+				}
+
+				const selectedKey = keys[currentIndex];
+				const nextIndex = (currentIndex + 1) % keys.length;
+				await this.ctx.storage.put('round_robin_index', nextIndex);
+
+				// Log the usage
+				const timestamp = Math.floor(Date.now() / 1000);
+				await this.ctx.storage.sql.exec('UPDATE api_keys SET total_calls = total_calls + 1 WHERE api_key = ?', selectedKey);
+				await this.ctx.storage.sql.exec('INSERT INTO api_key_usage_logs (api_key, timestamp) VALUES (?, ?)', selectedKey, timestamp);
+
+				console.log(`Gemini Selected API Key (Round-Robin): ${selectedKey}`);
+				return selectedKey;
+			});
+		} catch (error) {
+			console.error('轮询获取API密钥失败:', error);
+			// Fallback to random selection in case of an error to maintain system robustness
+			return this.getRandomApiKey();
 		}
 	}
 
@@ -896,7 +1055,7 @@ export class LoadBalancer extends DurableObject {
 			if (token !== authKey) {
 				return new Response('Unauthorized', { status: 401, headers: fixCors({}).headers });
 			}
-			apiKey = await this.getRandomApiKey();
+			apiKey = await this.getNextApiKeyInRotation();
 			if (!apiKey) {
 				return new Response('No API keys configured in the load balancer.', { status: 500 });
 			}
