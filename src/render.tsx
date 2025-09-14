@@ -112,8 +112,11 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 										<button id="delete-all-keys-btn" class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition mr-2">
 											一键删除所有
 										</button>
-										<button id="refresh-keys-btn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition">
+										<button id="refresh-keys-btn" class="px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition mr-2">
 											刷新
+										</button>
+										<button id="test-next-key-btn" class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 transition">
+											测试轮询
 										</button>
 									</div>
 								</div>
@@ -378,6 +381,22 @@ export const Render = ({ isAuthenticated, showWarning }: { isAuthenticated: bool
 											} catch (error) {
 												alert('请求失败，请检查网络连接。');
 												console.error('Failed to delete all keys:', error);
+											}
+										});
+
+										// Test next key in rotation
+										document.getElementById('test-next-key-btn').addEventListener('click', async () => {
+											try {
+												const response = await fetch('/api/next-key');
+												const result = await response.json();
+												if (response.ok && result.key) {
+													alert('获取到的下一个密钥: ' + result.key);
+												} else {
+													alert('获取密钥失败: ' + (result.error || '未知错误'));
+												}
+											} catch (error) {
+												alert('请求失败，请检查网络连接。');
+												console.error('Failed to test next key:', error);
 											}
 										});
 

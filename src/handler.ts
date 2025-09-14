@@ -74,6 +74,29 @@ export class LoadBalancer extends DurableObject {
 			return new Response('', { status: 204 });
 		}
 
+		// 处理获取下一个API密钥的请求
+		if (pathname === '/api/next-key' && request.method === 'GET') {
+			try {
+				const key = await this.getNextApiKeyInRotation();
+				if (!key) {
+					return new Response(JSON.stringify({ error: '没有可用的API密钥' }), {
+						status: 500,
+						headers: { 'Content-Type': 'application/json', ...fixCors({}).headers },
+					});
+				}
+				return new Response(JSON.stringify({ key }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json', ...fixCors({}).headers },
+				});
+			} catch (error: any) {
+				console.error('获取轮询API密钥失败:', error);
+				return new Response(JSON.stringify({ error: error.message || '内部服务器错误' }), {
+					status: 500,
+					headers: { 'Content-Type': 'application/json', ...fixCors({}).headers },
+				});
+			}
+		}
+
 		// 管理 API 权限校验（使用 HOME_ACCESS_KEY）
 		if (
 			(pathname === '/api/keys' && ['POST', 'GET', 'DELETE'].includes(request.method)) ||
@@ -1004,11 +1027,11 @@ async getAllApiKeys(): Promise<Response> {
 		try {
 			// Use blockConcurrencyWhile to ensure atomicity of the counter operations during concurrent requests
 			return await this.ctx.blockConcurrencyWhile(async () => {
-				const allKeysResult = await this.ctx.storage.sql.exec('SELECT api_key FROM api_keys').raw<any>();
+				const allKeysResult = await this.ctx.storage.sql.exec('SELECT api_key FROM api_keys').raw();
 				if (!allKeysResult) {
 					return null;
 				}
-				const keys = Array.from(allKeysResult).map((row) => (row as { api_key: string }).api_key);
+				const keys = Array.from(allKeysResult).map((row) => row[0]);
 
 				if (!keys || keys.length === 0) {
 					return null;
