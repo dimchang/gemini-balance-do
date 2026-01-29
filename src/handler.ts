@@ -603,7 +603,7 @@ export class LoadBalancer extends DurableObject {
 		return this.adjustProps(schema);
 	}
 
-	private adjustProps(schemaPart: any) {
+	private adjustProps = (schemaPart: any) => {
 		if (typeof schemaPart !== 'object' || schemaPart === null) {
 			return;
 		}
@@ -615,7 +615,7 @@ export class LoadBalancer extends DurableObject {
 			}
 			Object.values(schemaPart).forEach(this.adjustProps);
 		}
-	}
+	};
 
 	private transformTools(req: any) {
 		let tools, tool_config;
