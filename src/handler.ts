@@ -530,7 +530,8 @@ export class LoadBalancer extends DurableObject {
 
 							currentParts.push({
 								functionCall: {
-									name: call.function.name,
+									// 剥离任何可能的命名空间前缀 (如 "default_api:")
+									name: call.function.name.includes(':') ? call.function.name.split(':').pop()! : call.function.name,
 									args: cleanArgs,
 									...(thought_signature ? { thought_signature } : {}),
 									...(__gemini_extra__ || {}),
@@ -538,8 +539,9 @@ export class LoadBalancer extends DurableObject {
 							});
 						}
 					}
-					if (currentParts.length === 0 || (currentParts.length > 0 && currentParts.every((p) => p.functionCall))) {
-						currentParts.unshift({ text: ' ' });
+					// 只有当 parts 数组完全为空时才补位，避免干扰 functionCall
+					if (currentParts.length === 0) {
+						currentParts.push({ text: ' ' });
 					}
 					break;
 				case 'user':
@@ -551,7 +553,10 @@ export class LoadBalancer extends DurableObject {
 					currentParts = [
 						{
 							functionResponse: {
-								name: item.name || item.tool_call_id,
+								// 同样剥离响应中的函数名前缀
+								name: (item.name || item.tool_call_id).includes(':')
+									? (item.name || item.tool_call_id).split(':').pop()!
+									: item.name || item.tool_call_id,
 								response: { content: item.content },
 							},
 						},
@@ -579,7 +584,7 @@ export class LoadBalancer extends DurableObject {
 	}
 
 	private async transformMsg({ content }: any) {
-		const parts = [];
+		const parts: any[] = [];
 		if (!content) {
 			return parts;
 		}
@@ -609,7 +614,7 @@ export class LoadBalancer extends DurableObject {
 			}
 		}
 
-		if (content.every((item) => item.type === 'image_url')) {
+		if (content.every((item: any) => item.type === 'image_url')) {
 			parts.push({ text: '' }); // to avoid "Unable to submit request because it must have a text parameter"
 		}
 		return parts;
