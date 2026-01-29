@@ -525,10 +525,14 @@ export class LoadBalancer extends DurableObject {
 						for (const call of item.tool_calls) {
 							const args = JSON.parse(call.function.arguments);
 							const { __gemini_extra__, ...cleanArgs } = args;
+							const idParts = call.id.split('_sig_');
+							const thought_signature = idParts[1];
+
 							currentParts.push({
 								functionCall: {
 									name: call.function.name,
 									args: cleanArgs,
+									...(thought_signature ? { thought_signature } : {}),
 									...(__gemini_extra__ || {}),
 								},
 							});
@@ -699,13 +703,17 @@ export class LoadBalancer extends DurableObject {
 					message.content = (message.content || '') + part.text;
 				}
 				if (part.functionCall) {
-					const { name, args, ...rest } = part.functionCall;
+					const { name, args, thought_signature, ...rest } = part.functionCall;
 					const finalArgs = { ...args };
 					if (Object.keys(rest).length > 0) {
 						finalArgs.__gemini_extra__ = rest;
 					}
+					let callId = 'call_' + this.generateId();
+					if (thought_signature) {
+						callId += '_sig_' + thought_signature;
+					}
 					tool_calls.push({
-						id: 'call_' + this.generateId(),
+						id: callId,
 						type: 'function',
 						function: {
 							name,
@@ -793,10 +801,8 @@ export class LoadBalancer extends DurableObject {
 				const currentParts = content?.parts || [];
 
 				// 1. 处理文本
-				const text = currentParts
-					.filter((p: any) => p.text)
-					.map((p: any) => p.text)
-					.join('');
+				const textParts = currentParts.filter((p: any) => p.text);
+				const text = textParts.map((p: any) => p.text).join('');
 
 				if (text || finishReason) {
 					if (this.last[index] === undefined) {
@@ -837,17 +843,21 @@ export class LoadBalancer extends DurableObject {
 				}
 
 				// 2. 处理 functionCall
-				const tool_calls = currentParts
-					.filter((p: any) => p.functionCall)
+				const callParts = currentParts.filter((p: any) => p.functionCall);
+				const tool_calls = callParts
 					.map((p: any, i: number) => {
-						const { name, args, ...rest } = p.functionCall;
+						const { name, args, thought_signature, ...rest } = p.functionCall;
 						const finalArgs = { ...args };
 						if (Object.keys(rest).length > 0) {
 							finalArgs.__gemini_extra__ = rest;
 						}
+						let callId = 'call_' + Math.random().toString(36).substring(7);
+						if (thought_signature) {
+							callId += '_sig_' + thought_signature;
+						}
 						return {
 							index: i,
-							id: 'call_' + Math.random().toString(36).substring(7),
+							id: callId,
 							type: 'function',
 							function: {
 								name,
