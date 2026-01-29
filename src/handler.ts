@@ -518,6 +518,9 @@ export class LoadBalancer extends DurableObject {
 				case 'assistant':
 					role = 'model';
 					currentParts = await this.transformMsg(item);
+					if (item.reasoning_content && item.reasoning_content !== '[undefined]') {
+						currentParts.unshift({ text: item.reasoning_content });
+					}
 					if (item.tool_calls) {
 						for (const call of item.tool_calls) {
 							currentParts.push({
@@ -528,9 +531,13 @@ export class LoadBalancer extends DurableObject {
 							});
 						}
 					}
+					if (currentParts.length === 0 || (currentParts.length > 0 && currentParts.every((p) => p.functionCall))) {
+						currentParts.unshift({ text: ' ' });
+					}
 					break;
 				case 'user':
 					currentParts = await this.transformMsg(item);
+					if (currentParts.length === 0) currentParts = [{ text: ' ' }];
 					break;
 				case 'tool':
 					role = 'function';
@@ -547,14 +554,18 @@ export class LoadBalancer extends DurableObject {
 					throw new HttpError(`Unknown message role: "${item.role}"`, 400);
 			}
 
-			if (system_instruction && contents.length === 0 && role === 'model') {
-				contents.push({ role: 'user', parts: [{ text: ' ' }] });
+			const lastContent = contents[contents.length - 1];
+			if (lastContent && lastContent.role === role) {
+				lastContent.parts.push(...currentParts);
+			} else {
+				if (contents.length === 0 && role === 'model') {
+					contents.push({ role: 'user', parts: [{ text: ' ' }] });
+				}
+				contents.push({
+					role: role,
+					parts: currentParts,
+				});
 			}
-
-			contents.push({
-				role: role,
-				parts: currentParts,
-			});
 		}
 
 		return { system_instruction, contents };
