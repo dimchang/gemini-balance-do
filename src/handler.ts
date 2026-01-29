@@ -523,10 +523,13 @@ export class LoadBalancer extends DurableObject {
 					}
 					if (item.tool_calls) {
 						for (const call of item.tool_calls) {
+							const args = JSON.parse(call.function.arguments);
+							const { __gemini_extra__, ...cleanArgs } = args;
 							currentParts.push({
 								functionCall: {
 									name: call.function.name,
-									args: JSON.parse(call.function.arguments),
+									args: cleanArgs,
+									...(__gemini_extra__ || {}),
 								},
 							});
 						}
@@ -696,12 +699,17 @@ export class LoadBalancer extends DurableObject {
 					message.content = (message.content || '') + part.text;
 				}
 				if (part.functionCall) {
+					const { name, args, ...rest } = part.functionCall;
+					const finalArgs = { ...args };
+					if (Object.keys(rest).length > 0) {
+						finalArgs.__gemini_extra__ = rest;
+					}
 					tool_calls.push({
 						id: 'call_' + this.generateId(),
 						type: 'function',
 						function: {
-							name: part.functionCall.name,
-							arguments: JSON.stringify(part.functionCall.args),
+							name,
+							arguments: JSON.stringify(finalArgs),
 						},
 					});
 				}
@@ -782,10 +790,10 @@ export class LoadBalancer extends DurableObject {
 		if (candidates) {
 			for (const cand of candidates) {
 				const { index, content, finishReason } = cand;
-				const parts = content?.parts || [];
+				const currentParts = content?.parts || [];
 
 				// 1. 处理文本
-				const text = parts
+				const text = currentParts
 					.filter((p: any) => p.text)
 					.map((p: any) => p.text)
 					.join('');
@@ -829,17 +837,24 @@ export class LoadBalancer extends DurableObject {
 				}
 
 				// 2. 处理 functionCall
-				const tool_calls = parts
+				const tool_calls = currentParts
 					.filter((p: any) => p.functionCall)
-					.map((p: any, i: number) => ({
-						index: i,
-						id: 'call_' + Math.random().toString(36).substring(7),
-						type: 'function',
-						function: {
-							name: p.functionCall.name,
-							arguments: JSON.stringify(p.functionCall.args),
-						},
-					}));
+					.map((p: any, i: number) => {
+						const { name, args, ...rest } = p.functionCall;
+						const finalArgs = { ...args };
+						if (Object.keys(rest).length > 0) {
+							finalArgs.__gemini_extra__ = rest;
+						}
+						return {
+							index: i,
+							id: 'call_' + Math.random().toString(36).substring(7),
+							type: 'function',
+							function: {
+								name,
+								arguments: JSON.stringify(finalArgs),
+							},
+						};
+					});
 
 				if (tool_calls.length > 0) {
 					const obj = {
