@@ -622,7 +622,8 @@ export class LoadBalancer extends DurableObject {
 		if (req.tools) {
 			const funcs = req.tools.filter((tool: any) => tool.type === 'function' && tool.function?.name !== 'googleSearch');
 			if (funcs.length > 0) {
-				funcs.forEach(this.adjustSchema);
+				funcs.forEach((tool: any) => this.adjustSchema(tool)); 
+				//funcs.forEach(this.adjustSchema);
 				tools = [{ function_declarations: funcs.map((schema: any) => schema.function) }];
 			}
 		}
