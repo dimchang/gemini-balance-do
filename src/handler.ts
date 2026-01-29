@@ -505,31 +505,55 @@ export class LoadBalancer extends DurableObject {
 		}
 
 		const contents: any[] = [];
-		let system_instruction;
+		let system_instruction: any;
 
 		for (const item of messages) {
-			switch (item.role) {
+			let role = item.role;
+			let currentParts: any[] = [];
+
+			switch (role) {
 				case 'system':
 					system_instruction = { parts: await this.transformMsg(item) };
 					continue;
 				case 'assistant':
-					item.role = 'model';
+					role = 'model';
+					currentParts = await this.transformMsg(item);
+					if (item.tool_calls) {
+						for (const call of item.tool_calls) {
+							currentParts.push({
+								functionCall: {
+									name: call.function.name,
+									args: JSON.parse(call.function.arguments),
+								},
+							});
+						}
+					}
 					break;
 				case 'user':
+					currentParts = await this.transformMsg(item);
+					break;
+				case 'tool':
+					role = 'function';
+					currentParts = [
+						{
+							functionResponse: {
+								name: item.name || item.tool_call_id,
+								response: { content: item.content },
+							},
+						},
+					];
 					break;
 				default:
 					throw new HttpError(`Unknown message role: "${item.role}"`, 400);
 			}
 
-			if (system_instruction) {
-				if (!contents[0]?.parts.some((part: any) => part.text)) {
-					contents.unshift({ role: 'user', parts: { text: ' ' } });
-				}
+			if (system_instruction && contents.length === 0 && role === 'model') {
+				contents.push({ role: 'user', parts: [{ text: ' ' }] });
 			}
 
 			contents.push({
-				role: item.role,
-				parts: await this.transformMsg(item),
+				role: role,
+				parts: currentParts,
 			});
 		}
 
@@ -538,6 +562,9 @@ export class LoadBalancer extends DurableObject {
 
 	private async transformMsg({ content }: any) {
 		const parts = [];
+		if (!content) {
+			return parts;
+		}
 		if (!Array.isArray(content)) {
 			parts.push({ text: content });
 			return parts;
@@ -650,19 +677,32 @@ export class LoadBalancer extends DurableObject {
 		};
 
 		const transformCandidatesMessage = (cand: any) => {
-			const message = { role: 'assistant', content: [] as string[] };
+			const message: any = { role: 'assistant', content: null };
+			const tool_calls: any[] = [];
+
 			for (const part of cand.content?.parts ?? []) {
 				if (part.text) {
-					message.content.push(part.text);
+					message.content = (message.content || '') + part.text;
 				}
+				if (part.functionCall) {
+					tool_calls.push({
+						id: 'call_' + this.generateId(),
+						type: 'function',
+						function: {
+							name: part.functionCall.name,
+							arguments: JSON.stringify(part.functionCall.args),
+						},
+					});
+				}
+			}
+
+			if (tool_calls.length > 0) {
+				message.tool_calls = tool_calls;
 			}
 
 			return {
 				index: cand.index || 0,
-				message: {
-					...message,
-					content: message.content.join('') || null,
-				},
+				message: message,
 				logprobs: null,
 				finish_reason: reasonsMap[cand.finishReason] || cand.finishReason,
 			};
@@ -731,45 +771,81 @@ export class LoadBalancer extends DurableObject {
 		if (candidates) {
 			for (const cand of candidates) {
 				const { index, content, finishReason } = cand;
-				const { parts } = content;
-				const text = parts.map((p: any) => p.text).join('');
+				const parts = content?.parts || [];
 
-				if (this.last[index] === undefined) {
-					this.last[index] = '';
-				}
+				// 1. 处理文本
+				const text = parts
+					.filter((p: any) => p.text)
+					.map((p: any) => p.text)
+					.join('');
 
-				const lastText = this.last[index] || '';
-				let delta = '';
-
-				if (text.startsWith(lastText)) {
-					delta = text.substring(lastText.length);
-				} else {
-					// Find the common prefix
-					let i = 0;
-					while (i < text.length && i < lastText.length && text[i] === lastText[i]) {
-						i++;
+				if (text || finishReason) {
+					if (this.last[index] === undefined) {
+						this.last[index] = '';
 					}
-					// Send the rest of the new text as delta.
-					// This might not be perfect for all clients, but it prevents data loss.
-					delta = text.substring(i);
+
+					const lastText = this.last[index] || '';
+					let deltaText = '';
+
+					if (text.startsWith(lastText)) {
+						deltaText = text.substring(lastText.length);
+					} else {
+						let i = 0;
+						while (i < text.length && i < lastText.length && text[i] === lastText[i]) {
+							i++;
+						}
+						deltaText = text.substring(i);
+					}
+
+					this.last[index] = text;
+
+					if (deltaText || (finishReason && finishReason !== 'STOP')) {
+						const obj = {
+							id: this.id,
+							object: 'chat.completion.chunk',
+							created: Math.floor(Date.now() / 1000),
+							model: this.model,
+							choices: [
+								{
+									index,
+									delta: { content: deltaText || null },
+									finish_reason: reasonsMap[finishReason] || finishReason,
+								},
+							],
+						};
+						controller.enqueue(`data: ${JSON.stringify(obj)}\n\n`);
+					}
 				}
 
-				this.last[index] = text;
-
-				const obj = {
-					id: this.id,
-					object: 'chat.completion.chunk',
-					created: Math.floor(Date.now() / 1000),
-					model: this.model,
-					choices: [
-						{
-							index,
-							delta: { content: delta },
-							finish_reason: reasonsMap[finishReason] || finishReason,
+				// 2. 处理 functionCall
+				const tool_calls = parts
+					.filter((p: any) => p.functionCall)
+					.map((p: any, i: number) => ({
+						index: i,
+						id: 'call_' + Math.random().toString(36).substring(7),
+						type: 'function',
+						function: {
+							name: p.functionCall.name,
+							arguments: JSON.stringify(p.functionCall.args),
 						},
-					],
-				};
-				controller.enqueue(`data: ${JSON.stringify(obj)}\n\n`);
+					}));
+
+				if (tool_calls.length > 0) {
+					const obj = {
+						id: this.id,
+						object: 'chat.completion.chunk',
+						created: Math.floor(Date.now() / 1000),
+						model: this.model,
+						choices: [
+							{
+								index,
+								delta: { tool_calls },
+								finish_reason: reasonsMap[finishReason] || finishReason,
+							},
+						],
+					};
+					controller.enqueue(`data: ${JSON.stringify(obj)}\n\n`);
+				}
 			}
 		}
 	}
