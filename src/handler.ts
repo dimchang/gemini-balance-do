@@ -526,15 +526,15 @@ export class LoadBalancer extends DurableObject {
 							const args = JSON.parse(call.function.arguments);
 							const { __gemini_extra__, ...cleanArgs } = args;
 							const idParts = call.id.split('_sig_');
-							const thought_signature = idParts[1];
+							const thoughtSignature = idParts[1];
 
 							const functionCall: any = {
 								name: call.function.name.includes(':') ? call.function.name.split(':').pop()! : call.function.name,
 								args: cleanArgs,
 							};
 
-							if (thought_signature) {
-								functionCall.thought_signature = thought_signature;
+							if (thoughtSignature) {
+								functionCall.thoughtSignature = thoughtSignature;
 							}
 
 							if (__gemini_extra__) {
@@ -713,14 +713,14 @@ export class LoadBalancer extends DurableObject {
 					message.content = (message.content || '') + part.text;
 				}
 				if (part.functionCall) {
-					const { name, args, thought_signature, ...rest } = part.functionCall;
+					const { name, args, thoughtSignature, ...rest } = part.functionCall;
 					const finalArgs = { ...args };
 					if (Object.keys(rest).length > 0) {
 						finalArgs.__gemini_extra__ = rest;
 					}
 					let callId = 'call_' + this.generateId();
-					if (thought_signature) {
-						callId += '_sig_' + thought_signature;
+					if (thoughtSignature) {
+						callId += '_sig_' + thoughtSignature;
 					}
 					tool_calls.push({
 						id: callId,
@@ -856,14 +856,14 @@ export class LoadBalancer extends DurableObject {
 				const callParts = currentParts.filter((p: any) => p.functionCall);
 				const tool_calls = callParts
 					.map((p: any, i: number) => {
-						const { name, args, thought_signature, ...rest } = p.functionCall;
+						const { name, args, thoughtSignature, ...rest } = p.functionCall;
 						const finalArgs = { ...args };
 						if (Object.keys(rest).length > 0) {
 							finalArgs.__gemini_extra__ = rest;
 						}
 						let callId = 'call_' + Math.random().toString(36).substring(7);
-						if (thought_signature) {
-							callId += '_sig_' + thought_signature;
+						if (thoughtSignature) {
+							callId += '_sig_' + thoughtSignature;
 						}
 						return {
 							index: i,
