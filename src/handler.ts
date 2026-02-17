@@ -528,20 +528,22 @@ export class LoadBalancer extends DurableObject {
 							const idParts = call.id.split('_sig_');
 							const thoughtSignature = idParts[1];
 
-							const functionCall: any = {
-								name: call.function.name.includes(':') ? call.function.name.split(':').pop()! : call.function.name,
-								args: cleanArgs,
+							const part: any = {
+								functionCall: {
+									name: call.function.name.includes(':') ? call.function.name.split(':').pop()! : call.function.name,
+									args: cleanArgs,
+								},
 							};
 
 							if (thoughtSignature) {
-								functionCall.thoughtSignature = thoughtSignature;
+								part.thoughtSignature = thoughtSignature;
 							}
 
 							if (__gemini_extra__) {
-								Object.assign(functionCall, __gemini_extra__);
+								Object.assign(part.functionCall, __gemini_extra__);
 							}
 
-							currentParts.push({ functionCall });
+							currentParts.push(part);
 						}
 					}
 					// 只有当 parts 数组完全为空时才补位，避免干扰 functionCall
@@ -713,7 +715,8 @@ export class LoadBalancer extends DurableObject {
 					message.content = (message.content || '') + part.text;
 				}
 				if (part.functionCall) {
-					const { name, args, thoughtSignature, ...rest } = part.functionCall;
+					const { name, args, ...rest } = part.functionCall;
+					const thoughtSignature = part.thoughtSignature;
 					const finalArgs = { ...args };
 					if (Object.keys(rest).length > 0) {
 						finalArgs.__gemini_extra__ = rest;
@@ -856,7 +859,8 @@ export class LoadBalancer extends DurableObject {
 				const callParts = currentParts.filter((p: any) => p.functionCall);
 				const tool_calls = callParts
 					.map((p: any, i: number) => {
-						const { name, args, thoughtSignature, ...rest } = p.functionCall;
+						const { name, args, ...rest } = p.functionCall;
+						const thoughtSignature = p.thoughtSignature;
 						const finalArgs = { ...args };
 						if (Object.keys(rest).length > 0) {
 							finalArgs.__gemini_extra__ = rest;
