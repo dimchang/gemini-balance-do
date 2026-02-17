@@ -528,15 +528,20 @@ export class LoadBalancer extends DurableObject {
 							const idParts = call.id.split('_sig_');
 							const thought_signature = idParts[1];
 
-							currentParts.push({
-								functionCall: {
-									// 剥离任何可能的命名空间前缀 (如 "default_api:")
-									name: call.function.name.includes(':') ? call.function.name.split(':').pop()! : call.function.name,
-									args: cleanArgs,
-									...(thought_signature ? { thought_signature } : {}),
-									...(__gemini_extra__ || {}),
-								},
-							});
+							const functionCall: any = {
+								name: call.function.name.includes(':') ? call.function.name.split(':').pop()! : call.function.name,
+								args: cleanArgs,
+							};
+
+							if (thought_signature) {
+								functionCall.thought_signature = thought_signature;
+							}
+
+							if (__gemini_extra__) {
+								Object.assign(functionCall, __gemini_extra__);
+							}
+
+							currentParts.push({ functionCall });
 						}
 					}
 					// 只有当 parts 数组完全为空时才补位，避免干扰 functionCall
